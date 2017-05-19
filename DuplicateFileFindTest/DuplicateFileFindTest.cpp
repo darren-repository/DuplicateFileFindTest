@@ -24,73 +24,55 @@
 
 #include <wolfssl\wolfcrypt\hash.h>
 
+#include <hex.h>
+
 using namespace std;
 using namespace std::tr2::sys;
 
-typedef list<pair<uintmax_t, string>> _list_pair_ui_str;
-typedef multimap<uintmax_t, string> _multimap_ui_str;
-typedef multimap<const uintmax_t, string> _multimap_cui_str;
+typedef list<pair<uintmax_t, wstring>> _list_pair_ui_str;
+typedef list<pair<wstring, wstring>> _list_pair_str_str;
+typedef multimap<uintmax_t, wstring> _multimap_ui_str;
+typedef multimap<const uintmax_t, wstring> _multimap_cui_str;
 
-typedef map<uintmax_t, string> _map_ui_str;
-typedef map<const uintmax_t, string> _map_cui_str;
+typedef map<uintmax_t, wstring> _map_ui_str;
+typedef map<const uintmax_t, wstring> _map_cui_str;
 
-typedef map<string, uintmax_t> _map_str_ui;
+typedef map<wstring, uintmax_t> _map_str_ui;
 
-typedef vector<string> _vector_str;
+typedef vector<wstring> _vector_str;
 
-#define _make_ui_str_pair make_pair<uintmax_t, string>
-#define _make_cui_str_pair make_pair<const uintmax_t, string>
+#define _make_ui_str_pair make_pair<uintmax_t, wstring>
+#define _make_cui_str_pair make_pair<const uintmax_t, wstring>
 
-#define _make_str_ui_pair make_pair<string, uintmax_t>
-#define _make_str_cui_pair make_pair<string, const uintmax_t>
+#define _make_str_ui_pair make_pair<wstring, uintmax_t>
+#define _make_str_cui_pair make_pair<wstring, const uintmax_t>
+
+#define _make_str_str_pair make_pair<wstring,wstring>
 
 //structs
 typedef struct _directory_contents
 {
 	//default constructor
 	explicit _directory_contents()
-	{
-		//cout << "used the default constructor";
-		//outputMemberMemoryLocation();
-		//cout << endl;
-	}
+	{}
 
 	~_directory_contents()
-	{
-		//cout << "called deconstructor";
-		//outputMemberMemoryLocation();
-		//cout << endl;
-	}
+	{}
 
 	//copy constructor
-	_directory_contents(const _directory_contents& rhs)
-	{
-		m_list_pair_ui_str = rhs.m_list_pair_ui_str;
-		m_vector_str = rhs.m_vector_str;
-		//cout << "used the copy constructor";
-		//outputMemberMemoryLocation();
-		//cout << endl;
-	}
+	_directory_contents(const _directory_contents& rhs) : m_list_pair_ui_str(rhs.m_list_pair_ui_str), m_vector_str(rhs.m_vector_str)
+	{}
 
 	//move constructor
 	_directory_contents(_directory_contents&& rhs) noexcept
 		: m_list_pair_ui_str(std::move(rhs.m_list_pair_ui_str)), m_vector_str(std::move(rhs.m_vector_str))
-	{
-		//cout << "used the move constructor";
-		//outputMemberMemoryLocation();
-		//cout << endl;
-	}
+	{}
 
 	//assignment operator
 	_directory_contents& operator=(_directory_contents&& rhs)
 	{
 		m_list_pair_ui_str = move(rhs.m_list_pair_ui_str);
 		m_vector_str = move(rhs.m_vector_str);
-		
-		//cout << "used assignment operator=";
-		//outputMemberMemoryLocation();
-		//cout << endl;
-		
 		return *this;
 	}
 
@@ -108,19 +90,64 @@ private:
 
 }directory_contents;
 
+//result of file hashing
+typedef struct _file_information
+{
+	//default constructor
+	explicit _file_information(){}
+
+	~_file_information(){}
+
+	//copy constructor
+	_file_information(const _file_information& rhs) : 
+		m_str_file(rhs.m_str_file), 
+		m_str_file_hash(rhs.m_str_file_hash),
+		m_ui_file_size(rhs.m_ui_file_size),
+		m_wc_hash_type(rhs.m_wc_hash_type)
+	{}
+
+	//move constructor
+	_file_information(_file_information&& rhs) noexcept :
+	    m_str_file(std::move(rhs.m_str_file)), 
+		m_str_file_hash(std::move(rhs.m_str_file_hash)),
+		m_ui_file_size(std::move(rhs.m_ui_file_size)),
+		m_wc_hash_type(std::move(rhs.m_wc_hash_type))
+	{}
+
+	//assignment operator
+	_file_information& operator=(_file_information&& rhs)
+	{
+		m_str_file = move(rhs.m_str_file);
+		m_str_file_hash = move(rhs.m_str_file_hash);
+		m_ui_file_size = move(rhs.m_ui_file_size);
+		m_wc_hash_type = move(rhs.m_wc_hash_type);
+
+		return *this;
+	}
+
+	//the path of the file being hashed
+	wstring m_str_file;
+	//the hash of the file
+	wstring m_str_file_hash;
+	//the file size
+	unsigned int m_ui_file_size;
+	//hash type used
+	wc_HashType m_wc_hash_type;
+}file_information;
+
 //functions
-directory_contents getDirectoryContents(string strDirectory);
+directory_contents getDirectoryContents(wstring strDirectory);
 void DirectoryContentsWorkThread();
 void HashFileWorkThread();
 int HashGetBlockSize(wc_HashType hash_type);
-
+file_information getFileHash(wc_HashType hashType, wstring strFilePath);
 
 
 //Shared data for threads
 atomic<bool> g_a_shutdown = false;
 atomic<unsigned short> g_a_directory_count = 0;
 
-queue<string> g_que_str_directories;
+queue<wstring> g_que_str_directories;
 std::timed_mutex g_mquedirectories;
 
 queue<directory_contents> g_que_directorycontents;
@@ -130,7 +157,7 @@ std::timed_mutex g_mquedirectorycontents;
 void DirectoryContentsWorkThread()
 {
 	directory_contents dcReturn;
-	queue<string> que_str_directories;
+	queue<wstring> que_str_directories;
 	std::unique_lock<std::timed_mutex> lock_que_dc(g_mquedirectorycontents, std::defer_lock);
 
 	//continue execution while shutdown flag is set to false
@@ -139,7 +166,7 @@ void DirectoryContentsWorkThread()
 		//Check to see if there are any directories to process, if not then check global (shared) queue for records to retrieve
 		if (que_str_directories.size() == 0)
 		{
-			std::lock_guard<std::timed_mutex> lock_que_directories(g_mquedirectories);
+			std::lock_guard<std::timed_mutex> lock_que_d(g_mquedirectories);
 
 			//retrieve all directories queue'd to have contents returned
 			while (g_que_str_directories.size() > 0)
@@ -182,7 +209,7 @@ void DirectoryContentsWorkThread()
 }
 
 
-directory_contents getDirectoryContents(string strDirectory)
+directory_contents getDirectoryContents(wstring strDirectory)
 {
 	directory_contents dcReturn;
 
@@ -200,10 +227,10 @@ directory_contents getDirectoryContents(string strDirectory)
 		switch (deObject.status().type() )
 		{
 		case file_type::regular:
-			dcReturn.m_list_pair_ui_str.push_front(_make_ui_str_pair(file_size(deObject.path()), deObject.path().generic_string()));
+			dcReturn.m_list_pair_ui_str.push_front(_make_ui_str_pair(file_size(deObject.path()), deObject.path().generic_wstring()));
 			break;
 		case file_type::directory:
-			dcReturn.m_vector_str.push_back(deObject.path().generic_string());
+			dcReturn.m_vector_str.push_back(deObject.path().generic_wstring());
 			break;
 		}
 	}
@@ -236,16 +263,74 @@ int HashGetBlockSize(wc_HashType hash_type)
 }
 
 
+queue<wstring> g_que_str_files;
+std::timed_mutex g_m_quefiles;
+
+multimap<wstring, file_information> g_mm_str_filehash;
+std::timed_mutex g_m_mm_str_filehash;
+
+atomic<unsigned short> g_a_hash_count = 0;
+
+
 void HashFileWorkThread()
 {
+	file_information fh_return;
+	queue<wstring> que_str_files;
+	std::unique_lock<std::timed_mutex> lock_mm_str_fh(g_m_mm_str_filehash, std::defer_lock);
 
+	//continue execution while shutdown flag is set to false
+	while (g_a_shutdown == false)
+	{
+		//Check to see if there are any directories to process, if not then check global (shared) queue for records to retrieve
+		if (que_str_files.size() == 0)
+		{
+			std::lock_guard<std::timed_mutex> lock_que_f(g_m_quefiles);
 
+			//retrieve all directories queue'd to have contents returned
+			while (g_que_str_files.size() > 0)
+			{
+				que_str_files.push(g_que_str_files.front());
+				g_que_str_files.pop();
+			}
+		}
 
+		//Retrieve the contents for each of the directories
+		while (que_str_files.size() > 0)
+		{
+			fh_return = getFileHash(WC_HASH_TYPE_MD5, que_str_files.front());
+			que_str_files.pop();
+
+			//aquire lock
+			while (lock_mm_str_fh.try_lock_for(chrono::milliseconds(1)) == false)
+			{
+				//can't aquire the mutex, yield the thread
+				this_thread::yield();
+			}
+
+			//move data
+			g_mm_str_filehash.insert(make_pair(fh_return.m_str_file_hash, std::move(fh_return)));
+
+			//unlock queue
+			lock_mm_str_fh.unlock();
+
+			//decrement directory count
+			g_a_hash_count--;
+		}
+
+		//Check if anything to process, yield execution if nothing to process
+		if (que_str_files.size() == 0)
+		{
+			this_thread::yield();
+		}
+
+	}//end of while (g_a_shutdown == false)
 }
 
 
-string getFileHash(wc_HashType hashType, string strFilePath)
+file_information getFileHash(wc_HashType hashType, wstring strFilePath)
 {
+	file_information fh_return;
+
 	//file stream vars
 	uintmax_t uiBytesLeftInFile = 0;
 	uintmax_t uiFileSize = 0;
@@ -257,6 +342,11 @@ string getFileHash(wc_HashType hashType, string strFilePath)
 	byte bHashDigest[128] = {}; //hash digest is a maximum of 64 bytes
 	size_t sHashDigestSize = 0; //how large is the digest intended to be
 	size_t sHashBlockSize = 0; //used to determine number of bytes to read from file at a time
+	wstring strHashDigest; //Hash Digest in a wstring (to be returned)
+
+	//copy the input parameters for the return
+	fh_return.m_str_file = strFilePath;
+	fh_return.m_wc_hash_type = hashType;
 
 	//validate the file exists, if not then exit the program early
 	if (exists(strFilePath) == true)
@@ -270,13 +360,14 @@ string getFileHash(wc_HashType hashType, string strFilePath)
 		//verify the file is opened and then retrieve the file contents for hashing
 		if (fsHashFile.is_open() == false)
 		{
-			cout << "failed to open file: " << strFilePath.data() << endl;
+			//the file didn't open correctly, cleanup the function
+			goto cleanup;
 		}
 	}
 	else
 	{
 		//the file doesn't exist
-		cout << "error the file: " << strFilePath.data() << " was not found" << endl;
+		goto cleanup;
 	}
 
 
@@ -308,15 +399,14 @@ string getFileHash(wc_HashType hashType, string strFilePath)
 	//Get the completed hash
 	wc_HashFinal(&hashAlg, hashType, bHashDigest);
 
-	//human readable output
-	cout << vCmdLineArgs[0].c_str() << " hash of file " << pathHashFile.string().c_str() << endl;
+	//Convert to a wstring
+	strHashDigest = ByteArrayToHexWString(bHashDigest, sHashDigestSize);
 
-	for (int ibyte = 0; ibyte < sHashDigestSize; ibyte++)
-	{
-		cout << std::hex << std::uppercase << std::setfill('0') << std::setw(2) << int(bHashDigest[ibyte]);
-	}
+	//copy the hash wstring for return
+	fh_return.m_str_file_hash = strHashDigest;
 
-	cout << endl;
+	//TODO: make this less hacky (getting file size, instead the file_information struct should be handed around)
+	fh_return.m_ui_file_size = static_cast<unsigned int>(file_size(fh_return.m_str_file));
 
 cleanup:
 
@@ -325,22 +415,27 @@ cleanup:
 	{
 		fsHashFile.close();
 	}
+
+	return fh_return;
 }
 
 
 int main()
 {
 	_multimap_cui_str multimapOfPotentialDuplicates;
+	multimap<wstring, file_information> mmHashedFiles;
 	_map_ui_str mapOfFileSizes; //Use to determine collision of file sizes
 	_map_str_ui mapOfFileNames; //Use to list potential duplicate files (via their size only)
 	queue<directory_contents> que_directorycontents;
+	queue<wstring> que_files_to_hash;
 	std::unique_lock<std::timed_mutex> lock_que_directories(g_mquedirectories, std::defer_lock);
+	std::unique_lock<std::timed_mutex> lock_que_files(g_m_quefiles, std::defer_lock);
 	bool bFinishedProcessing = 0;
 
 	//aquire lock
 	lock_que_directories.lock();
 	//push the first directory on
-	g_que_str_directories.push(string("c:\\"));
+	g_que_str_directories.push(wstring(L"D:\\DCIM\\Pictures"));
 	//increment work count
 	g_a_directory_count++;
 	//release the lock
@@ -350,6 +445,17 @@ int main()
 	thread directorycontents_thread = thread(DirectoryContentsWorkThread);
 	//detach the thread so it can clean up once it finishes
 	directorycontents_thread.detach();
+
+	//kick off the first worker thread for creating secure hash of file contents
+	thread hashfile_thread_a = thread(HashFileWorkThread);
+	//detach the thread so it can clean up once it finishes
+	hashfile_thread_a.detach();
+
+	//kick off the second worker thread for creating secure hash of file contents
+	thread hashfile_thread_b = thread(HashFileWorkThread);
+	//detach the thread so it can clean up once it finishes
+	hashfile_thread_b.detach();
+
 
 	while (g_a_shutdown == false)
 	{
@@ -379,7 +485,7 @@ int main()
 					this_thread::yield();
 				}
 
-				for (string strDirectory : que_directorycontents.front().m_vector_str)
+				for (wstring strDirectory : que_directorycontents.front().m_vector_str)
 				{
 					g_que_str_directories.push(strDirectory);
 					g_a_directory_count++; //increment the directory count
@@ -404,16 +510,19 @@ int main()
 						auto aExistingRecord = mapOfFileNames.insert(make_pair(aInsertReturn.first->second, aInsertReturn.first->first));
 
 						//Check to see if the insert was successful, which used the record that had 'blocked' insertion on the 
-						// first map which inserts are based upon the file size
+						// queue for hashing the contents of the file
 						if (aExistingRecord.second == true)
 						{
 							//If the name of the file (from the blocking record) was inserted then it was a unique file name
-							// then make sure to add it to the multimap of files that are potentially duplicate files
-							multimapOfPotentialDuplicates.insert(make_pair(aInsertReturn.first->first, aInsertReturn.first->second));
+							// then make sure to add it to queue of files to be hashed
+							que_files_to_hash.push(aInsertReturn.first->second);
+
+							//multimapOfPotentialDuplicates.insert(make_pair(aInsertReturn.first->first, aInsertReturn.first->second));
 						}
 
-						//add the record that was blocked from insertion (which was based upon it's file size from the first map)
-						multimapOfPotentialDuplicates.insert(aItem);
+						//queue the record that was blocked from insertion (which was based upon it's file size from the first map)
+						que_files_to_hash.push(aItem.second);
+						//multimapOfPotentialDuplicates.insert(aItem);
 					}
 				}
 			}
@@ -422,12 +531,38 @@ int main()
 			que_directorycontents.pop();
 		}//end while(que_directorycontents.size() > 0 )
 
+		//Check for files (from the directory contents) that are to be hashed
+		if (que_files_to_hash.size() > 0)
+		{
+			//lock access to files [to hash] queue
+			while (lock_que_files.try_lock_for(chrono::milliseconds(1)) == false)
+			{
+				//yield thread while waiting for lock
+				this_thread::yield();
+			}
+
+			while (que_files_to_hash.size() > 0)
+			{
+				g_que_str_files.push(que_files_to_hash.front());
+				g_a_hash_count++;
+
+				//remove the front item from the local queue
+				que_files_to_hash.pop();
+			}
+
+			//unlock queue
+			lock_que_files.unlock();
+		}
+
 
 		//verify if there is no more work to be done, all threads finished processing
 		if (que_directorycontents.size() == 0 && g_a_directory_count == 0)
 		{
-			//send the shutdown flag to the worker thread
-			g_a_shutdown = true;
+			if (g_a_hash_count == 0)
+			{
+				//send the shutdown flag to the worker thread
+				g_a_shutdown = true;
+			}
 		}
 		else if (que_directorycontents.size() == 0)
 		{
@@ -437,9 +572,9 @@ int main()
 
 	}//end  while (g_a_shutdown == false)
 
-	for (auto aItem : multimapOfPotentialDuplicates)
+	for (auto aItem : g_mm_str_filehash)
 	{
-		cout << setw(10) << aItem.first << " : " << aItem.second.c_str() << endl;
+		cout << setw(10) << aItem.first << " | " << setw(10) << aItem.second.m_ui_file_size << aItem.second.m_str_file << endl;
 	}
 
     return 0;
