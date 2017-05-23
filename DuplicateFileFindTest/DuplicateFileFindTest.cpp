@@ -124,9 +124,9 @@ typedef struct _fso_information
 	//move constructor
 	_fso_information (_fso_information&& rhs) noexcept :
 	    m_wstr_fso_name(std::move(rhs.m_wstr_fso_name)), 
-		m_fso_type(std::move(rhs.m_fso_type)),
-		m_ui_fso_size(std::move(rhs.m_ui_fso_size)),
-		m_wc_hash_type(std::move(rhs.m_wc_hash_type)),
+		m_fso_type(rhs.m_fso_type),
+		m_ui_fso_size(rhs.m_ui_fso_size),
+		m_wc_hash_type(rhs.m_wc_hash_type),
 		m_wstr_fso_hash(std::move(rhs.m_wstr_fso_hash))
 	{}
 
@@ -167,7 +167,7 @@ typedef struct _fso_information
 }fso_information;
 
 //functions
-deque<fso_information> getDirectoryContents(fso_information fiDirectory);
+deque<fso_information> getDirectoryContents(wstring& wstrDirectory);
 void DirectoryContentsWorkThread();
 void HashFileWorkThread();
 int HashGetBlockSize(wc_HashType hash_type);
@@ -178,8 +178,8 @@ void getFileHash(fso_information& fiFileToHash);
 atomic<bool> g_a_shutdown = false;
 atomic<unsigned short> g_a_directory_count = 0;
 
-deque<fso_information> g_dque_fi_directories;
-std::timed_mutex g_m_dque_fi_directories;
+deque<wstring> g_dque_wstr_directories;
+std::timed_mutex g_m_dque_wstr_directories;
 
 deque<fso_information> g_dque_fi_contents;
 std::timed_mutex g_m_dque_fi_contents;
@@ -188,33 +188,33 @@ std::timed_mutex g_m_dque_fi_contents;
 void DirectoryContentsWorkThread()
 {
 	fso_information fiAddFile;
+	deque<wstring> dque_wstr_directories;
 	deque<fso_information> dque_fi_contents;
-	deque<fso_information> dque_fi_directories;
 	std::unique_lock<std::timed_mutex> lock_que_dc(g_m_dque_fi_contents, std::defer_lock);
 
 	//continue execution while shutdown flag is set to false
 	while (g_a_shutdown == false)
 	{
 		//Check to see if there are any directories to process, if not then check global (shared) queue for records to retrieve
-		if (dque_fi_directories.size() == 0)
+		if (dque_wstr_directories.size() == 0)
 		{
-			std::lock_guard<std::timed_mutex> lock_que_d(g_m_dque_fi_directories);
+			std::lock_guard<std::timed_mutex> lock_que_d(g_m_dque_wstr_directories);
 
 			//retrieve all directories queue'd to have contents returned
-			g_dque_fi_directories.swap(dque_fi_directories);
+			g_dque_wstr_directories.swap(dque_wstr_directories);
 		}
 
 		//Check if anything to process, yield execution if nothing to process
-		if (dque_fi_directories.size() == 0)
+		if (dque_wstr_directories.size() == 0)
 		{
 			this_thread::yield();
 		}
 
 		//Retrieve the contents for each of the directories
-		for( fso_information fiDirectory : dque_fi_directories )
+		for( wstring& wstrDirectory : dque_wstr_directories )
 		{
 			//retrieve the contents of the directory
-			dque_fi_contents = std::move(getDirectoryContents(std::move(fiDirectory)));
+			dque_fi_contents = getDirectoryContents(wstrDirectory);
 
 			//acquire lock
 			while (lock_que_dc.try_lock_for(chrono::milliseconds(1)) == false)
@@ -224,42 +224,42 @@ void DirectoryContentsWorkThread()
 			}
 
 			//move data in to global queue for processing
-			for (fso_information fiFile : dque_fi_contents)
+			for (fso_information& fiFile : dque_fi_contents)
 			{
 				g_dque_fi_contents.push_back(std::move(fiFile));
 			}
 
-			//clear the dque_fi_contents (which have all been moved)
-			dque_fi_contents.clear();
-
 			//unlock queue
 			lock_que_dc.unlock();
+
+			//clear the dque_fi_contents (which have all been moved)
+			dque_fi_contents.clear();
 
 			//decrement directory count
 			g_a_directory_count--;
 		}
 
 		//clear the list of directories that was either just processed or is empty
-		dque_fi_directories.clear();
+		dque_wstr_directories.clear();
 
 	}//end of while (g_a_shutdown == false)
 }
 
 
-deque<fso_information> getDirectoryContents(fso_information fiDirectory)
+deque<fso_information> getDirectoryContents(wstring& wstrDirectory)
 {
 	deque<fso_information> dque_fi_contents;
 
 	//cout << "getFilesFromDirectory thread id: " << this_thread::get_id() << endl;
 
 	//validate the directory exists 
-	if (is_directory(fiDirectory.m_wstr_fso_name) == false)
+	if (is_directory(wstrDirectory) == false)
 	{
 		return dque_fi_contents;
 	}
 
 	//iterate through each file in the directory using a range-based for-loop :-)
-	for (directory_entry deObject : directory_iterator(fiDirectory.m_wstr_fso_name))
+	for (directory_entry deObject : directory_iterator(wstrDirectory))
 	{
 		try
 		{
@@ -492,26 +492,26 @@ int main()
 	multimap<wstring, fso_information> mmhashedfiles;
 	map<unsigned int,fso_information> mapOfFileSizes; //Use to determine collision of file sizes
 	map<wstring,fso_information> mapOfFileNames; //Use to list potential duplicate files (via their size only)
+	deque<wstring> dque_wstr_directories;
 	deque<fso_information> dque_fi_contents;
-	deque<fso_information> dque_fi_directories;
 	deque<fso_information> dque_fi_filestohash;
-	std::unique_lock<std::timed_mutex> lock_que_directories(g_m_dque_fi_directories, std::defer_lock);
+	std::unique_lock<std::timed_mutex> lock_que_directories(g_m_dque_wstr_directories, std::defer_lock);
 	std::unique_lock<std::timed_mutex> lock_que_files(g_m_dque_hashfiles, std::defer_lock);
 	bool bFinishedProcessing = 0;
 
 	//aquire lock
 	lock_que_directories.lock();
 	//push the first directory on
-	g_dque_fi_directories.push_back(fso_information(L"D:\\DCIM\\Pictures\\iCloud Photos\\Downloads", file_type::directory));
+	g_dque_wstr_directories.push_back(L"c:\\windows");
 	//increment work count
 	g_a_directory_count++;
 	//release the lock
 	lock_que_directories.unlock();
 
 	//kick off the worker thread for processing (or retrieving) directory contents
-	thread directorycontents_thread = thread(DirectoryContentsWorkThread);
+	thread directorycontents_thread_a = thread(DirectoryContentsWorkThread);
 	//detach the thread so it can clean up once it finishes
-	directorycontents_thread.detach();
+	directorycontents_thread_a.detach();
 
 	//kick off the first worker thread for creating secure hash of file contents
 	thread hashfile_thread_a = thread(HashFileWorkThread);
@@ -523,6 +523,10 @@ int main()
 	//detach the thread so it can clean up once it finishes
 	hashfile_thread_b.detach();
 
+	//kick off the second worker thread for creating secure hash of file contents
+	thread hashfile_thread_c = thread(HashFileWorkThread);
+	//detach the thread so it can clean up once it finishes
+	hashfile_thread_c.detach();
 
 	while (g_a_shutdown == false)
 	{
@@ -532,7 +536,7 @@ int main()
 			std::lock_guard<std::timed_mutex> lock_que_contents(g_m_dque_fi_contents);
 
 			//move the queued items to a local queue for processing of directory contents
-			for (fso_information fiContents : g_dque_fi_contents)
+			for (fso_information& fiContents : g_dque_fi_contents)
 			{
 				dque_fi_contents.push_back(std::move(fiContents));
 			}
@@ -542,42 +546,38 @@ int main()
 		}
 
 		//process all items that are currently in the directory contents queue
-		for( fso_information fiEntry : dque_fi_contents )
+		for( fso_information& fiEntry : dque_fi_contents )
 		{
 
 			if (fiEntry.m_fso_type == file_type::directory)
 			{
-				//move item to queue of directories to be processed
-				dque_fi_directories.push_back(std::move(fiEntry));
+				//move only the string to queue of directories to be processed
+				dque_wstr_directories.push_back(std::move(fiEntry.m_wstr_fso_name));
 			}
 			else if (fiEntry.m_fso_type == file_type::regular)
 			{
-				if (fiEntry.m_ui_fso_size >= (1024 * 1024))
+				auto aInsertReturn = mapOfFileSizes.insert(make_pair(fiEntry.m_ui_fso_size, fiEntry));
+
+				//check to see if a key with the file size already exists
+				if (aInsertReturn.second == false)
 				{
-					auto aInsertReturn = mapOfFileSizes.insert(make_pair(fiEntry.m_ui_fso_size, fiEntry));
+					//Insert based upon size failed, attempt to add to a new map using the filename as the key
+					auto aExistingRecord = mapOfFileNames.insert(make_pair(aInsertReturn.first->second.m_wstr_fso_name, aInsertReturn.first->second));
 
-					//check to see if a key with the file size already exists
-					if (aInsertReturn.second == false)
+					//Check to see if the insert was successful, which used the record that had 'blocked' insertion on the 
+					// queue for hashing the contents of the file
+					if (aExistingRecord.second == true)
 					{
-						//Insert based upon size failed, attempt to add to a new map using the filename as the key
-						auto aExistingRecord = mapOfFileNames.insert(make_pair(aInsertReturn.first->second.m_wstr_fso_name, aInsertReturn.first->second));
+						//If the name of the file (from the blocking record) was inserted then it was a unique file name
+						// then make sure to add it to queue of files to be hashed
+						dque_fi_filestohash.push_back(aInsertReturn.first->second);
 
-						//Check to see if the insert was successful, which used the record that had 'blocked' insertion on the 
-						// queue for hashing the contents of the file
-						if (aExistingRecord.second == true)
-						{
-							//If the name of the file (from the blocking record) was inserted then it was a unique file name
-							// then make sure to add it to queue of files to be hashed
-							dque_fi_filestohash.push_back(aInsertReturn.first->second);
-
-							//multimapOfPotentialDuplicates.insert(make_pair(aInsertReturn.first->first, aInsertReturn.first->second));
-						}
-
-						//queue the record that was blocked from insertion (which was based upon it's file size from the first map)
-						dque_fi_filestohash.push_back(fiEntry);
-						//multimapOfPotentialDuplicates.insert(aItem);
+						//multimapOfPotentialDuplicates.insert(make_pair(aInsertReturn.first->first, aInsertReturn.first->second));
 					}
 
+					//queue the record that was blocked from insertion (which was based upon it's file size from the first map)
+					dque_fi_filestohash.push_back(fiEntry);
+					//multimapOfPotentialDuplicates.insert(aItem);
 				}
 			}
 		}//for( fso_information fiEntry : dque_fi_contents )
@@ -586,7 +586,7 @@ int main()
 		dque_fi_contents.clear();
 
 		 //move any directory fso_information objects in to global queue for processing
-		if (dque_fi_directories.size() > 0)
+		if (dque_wstr_directories.size() > 0)
 		{
 			while (lock_que_directories.try_lock_for(chrono::milliseconds(1)) == false)
 			{
@@ -594,9 +594,9 @@ int main()
 				this_thread::yield();
 			}
 
-			for (fso_information fidirectory : dque_fi_directories)
+			for (wstring& wstrDirectory : dque_wstr_directories)
 			{
-				g_dque_fi_directories.push_back(fidirectory);
+				g_dque_wstr_directories.push_back(std::move(wstrDirectory));
 				g_a_directory_count++; //increment the directory count
 			}
 
@@ -604,7 +604,7 @@ int main()
 			lock_que_directories.unlock();
 
 			//clear the directories to process
-			dque_fi_directories.clear();
+			dque_wstr_directories.clear();
 		}
 
 		//Check for files (from the directory contents) that are to be hashed
@@ -617,7 +617,7 @@ int main()
 				this_thread::yield();
 			}
 
-			for (fso_information fifiletohash : dque_fi_filestohash)
+			for (fso_information& fifiletohash : dque_fi_filestohash)
 			{
 				g_dque_fi_hashfiles.push_back(std::move(fifiletohash));
 				g_a_hash_count++;
@@ -650,7 +650,7 @@ int main()
 
 	for (auto aItem : g_mm_str_fi_hashedfiles)
 	{
-		cout << setw(10) << aItem.first << " | " << setw(10) << aItem.second.m_ui_fso_size << aItem.second.m_wstr_fso_name << endl;
+		cout << setw(10) << aItem.first << " | " << setw(10) << aItem.second.m_ui_fso_size << " | " << aItem.second.m_wstr_fso_name << endl;
 	}
 
     return 0;
